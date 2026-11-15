@@ -341,6 +341,44 @@ def _pick_duration(m: dict[str, Any], want: Optional[int]) -> Optional[int]:
     return under[-1] if under else allowed[0]
 
 
+def _is_qubax_url(url: str) -> bool:
+    """True only for https URLs on the configured Qubax API host (the key is never sent elsewhere)."""
+    from urllib.parse import urlparse
+
+    u, base = urlparse(url), urlparse(_base_url())
+    return u.scheme == "https" and bool(u.hostname) and u.hostname == base.hostname
+
+
+def _download_video(url: str, *, prefix: str) -> str:
+    """Save the finished video locally; return its path (or the URL if saving fails).
+
+    Qubax's own media URLs are private and need the API key, so they are fetched here with
+    the key. Any other host goes through Hermes's SSRF-guarded downloader, without the key."""
+    import httpx
+
+    from agent.video_gen_provider import save_bytes_video
+
+    if not _is_qubax_url(url):
+        try:
+            return str(save_url_video(url, prefix=prefix))
+        except Exception as exc:
+            logger.debug("qubax-media: caching video failed (%s); returning URL", exc)
+            return url
+    try:
+        with httpx.Client(timeout=180.0, follow_redirects=False) as client:
+            r = client.get(url, headers=_headers(json_body=False))
+        ctype = (r.headers.get("content-type") or "").split(";")[0].strip()
+        if r.status_code != 200 or not ctype.startswith("video/") or not r.content:
+            raise RuntimeError(f"HTTP {r.status_code} {ctype}")
+        if len(r.content) > 200 * 1024 * 1024:
+            raise RuntimeError("video larger than 200 MB")
+        ext = {"video/webm": "webm", "video/quicktime": "mov"}.get(ctype, "mp4")
+        return str(save_bytes_video(r.content, prefix=prefix, extension=ext))
+    except Exception as exc:
+        logger.warning("qubax-media: could not download the video (%s). Open it with your key: %s", exc, url)
+        return url
+
+
 class QubaxVideoGenProvider(VideoGenProvider):
     """Text-to-video and image-to-video through Qubax (async job + poll)."""
 
@@ -450,11 +488,7 @@ class QubaxVideoGenProvider(VideoGenProvider):
         url = state.get("video_url") or ((state.get("result") or {}).get("artifacts") or [{}])[0].get("url")
         if not url:
             return fail("Qubax finished the job but returned no video URL.", "empty_response")
-        try:
-            ref = str(save_url_video(url, prefix=f"qubax_{model}"))
-        except Exception as exc:
-            logger.debug("qubax-media: caching video failed (%s); returning URL", exc)
-            ref = url
+        ref = _download_video(url, prefix=f"qubax_{model}")
         return video_success(video=ref, model=model, prompt=prompt, modality="image" if image_url else "text",
                              aspect_ratio=body.get("aspect_ratio", ""), duration=body.get("duration") or 0,
                              provider="qubax", extra={"generation_id": gen_id})
