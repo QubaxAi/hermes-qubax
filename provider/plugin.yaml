@@ -1,0 +1,6 @@
+name: qubax
+kind: model-provider
+version: 1.0.0
+description: Qubax AI — 400+ models through one OpenAI-compatible API, pay with crypto
+author: Qubax AI
+homepage: https://qubax.ai

@@ -1,0 +1,8 @@
+name: qubax-media
+kind: backend
+version: 1.0.0
+description: Qubax AI image, video, text-to-speech and speech-to-text backends (one key, live catalog)
+author: Qubax AI
+homepage: https://qubax.ai
+requires_env:
+  - QUBAX_API_KEY
